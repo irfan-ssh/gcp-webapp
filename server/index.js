@@ -4,6 +4,8 @@ import dotenv from 'dotenv';
 import { google } from 'googleapis';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import rateLimit from 'express-rate-limit';
+import helmet from 'helmet';
 
 dotenv.config();
 
@@ -12,6 +14,20 @@ const __dirname = path.dirname(__filename);
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+
+// Security middleware
+app.use(helmet({
+  crossOriginEmbedderPolicy: false,
+  contentSecurityPolicy: false
+}));
+
+// Rate limiting
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  message: { error: 'Too many requests, please try again later.' }
+});
+app.use('/api/', limiter);
 
 // Middleware
 app.use(cors({
@@ -117,25 +133,33 @@ app.get('/api/projects', async (req, res) => {
     res.json({
       projects: [
         {
-          projectId: 'demo-project-1',
+          projectId: 'irfan-auto-1234567890',
           name: 'Demo Project 1',
           projectNumber: '123456789',
           lifecycleState: 'ACTIVE',
           createTime: '2024-01-15T10:30:00Z'
         },
         {
-          projectId: 'demo-project-2',
+          projectId: 'irfan-auto-0987654321',
           name: 'Demo Project 2',
           projectNumber: '987654321',
           lifecycleState: 'ACTIVE',
           createTime: '2024-01-20T14:45:00Z'
+        },
+        {
+          projectId: 'irfan-auto-1122334455',
+          name: 'Demo Project 3',
+          projectNumber: '112233445',
+          lifecycleState: 'ACTIVE',
+          createTime: '2024-01-25T09:15:00Z'
         }
       ]
     });
   }
 });
 
-app.post('/api/projects', async (req, res) => {
+// Bulk create projects
+app.post('/api/projects/bulk', async (req, res) => {
   const sessionId = req.headers.authorization?.replace('Bearer ', '');
   const session = sessions.get(sessionId);
   
@@ -143,53 +167,67 @@ app.post('/api/projects', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
-  const { projectId, name } = req.body;
+  const { count, prefix, enableBilling, createServiceAccounts } = req.body;
   
-  if (!projectId || !name) {
-    return res.status(400).json({ error: 'Project ID and name are required' });
+  if (!count || count < 1 || count > 10) {
+    return res.status(400).json({ error: 'Count must be between 1 and 10' });
   }
   
   try {
     oauth2Client.setCredentials(session.tokens);
     
-    const projectData = {
-      projectId,
-      name,
-      parent: {
-        type: 'organization',
-        id: process.env.GCP_ORGANIZATION_ID || '123456789'
-      }
-    };
+    const createdProjects = [];
+    const serviceAccountKeys = [];
     
-    const response = await cloudresourcemanager.projects.create({
-      auth: oauth2Client,
-      requestBody: projectData
-    });
-    
-    res.json({ 
-      success: true, 
-      project: response.data,
-      message: 'Project created successfully'
-    });
-  } catch (error) {
-    console.error('Error creating project:', error);
-    
-    // Mock success response for demo
-    res.json({
-      success: true,
-      project: {
+    for (let i = 1; i <= count; i++) {
+      const timestamp = Date.now();
+      const projectId = `${prefix}-${timestamp}-${i}`;
+      const projectName = `${prefix} Project ${i}`;
+      
+      // Mock project creation for demo
+      const mockProject = {
         projectId,
-        name,
+        name: projectName,
         projectNumber: Math.floor(Math.random() * 1000000000).toString(),
         lifecycleState: 'ACTIVE',
         createTime: new Date().toISOString()
-      },
-      message: 'Project created successfully (Demo Mode)'
+      };
+      
+      createdProjects.push(mockProject);
+      
+      if (createServiceAccounts) {
+        // Mock service account key
+        const mockKey = {
+          type: "service_account",
+          project_id: projectId,
+          private_key_id: `key_${i}_${timestamp}`,
+          private_key: "-----BEGIN PRIVATE KEY-----\nMOCK_PRIVATE_KEY\n-----END PRIVATE KEY-----\n",
+          client_email: `service-account-${i}@${projectId}.iam.gserviceaccount.com`,
+          client_id: `${timestamp}${i}`,
+          auth_uri: "https://accounts.google.com/o/oauth2/auth",
+          token_uri: "https://oauth2.googleapis.com/token"
+        };
+        serviceAccountKeys.push(mockKey);
+      }
+      
+      // Simulate processing time
+      await new Promise(resolve => setTimeout(resolve, 500));
+    }
+    
+    res.json({
+      success: true,
+      projects: createdProjects,
+      serviceAccountKeys: createServiceAccounts ? serviceAccountKeys : undefined,
+      message: `Successfully created ${count} project${count > 1 ? 's' : ''} (Demo Mode)`
     });
+  } catch (error) {
+    console.error('Error creating projects:', error);
+    res.status(500).json({ error: 'Failed to create projects' });
   }
 });
 
-app.delete('/api/projects/:projectId', async (req, res) => {
+// Bulk delete projects
+app.post('/api/projects/bulk-delete', async (req, res) => {
   const sessionId = req.headers.authorization?.replace('Bearer ', '');
   const session = sessions.get(sessionId);
   
@@ -197,28 +235,62 @@ app.delete('/api/projects/:projectId', async (req, res) => {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   
-  const { projectId } = req.params;
+  const { projectIds } = req.body;
+  
+  if (!Array.isArray(projectIds) || projectIds.length === 0) {
+    return res.status(400).json({ error: 'Project IDs array is required' });
+  }
   
   try {
     oauth2Client.setCredentials(session.tokens);
     
-    await cloudresourcemanager.projects.delete({
-      auth: oauth2Client,
-      projectId
-    });
+    // Mock deletion process
+    for (const projectId of projectIds) {
+      console.log(`Deleting project: ${projectId}`);
+      // Simulate processing time
+      await new Promise(resolve => setTimeout(resolve, 300));
+    }
     
-    res.json({ 
-      success: true, 
-      message: 'Project deleted successfully'
-    });
-  } catch (error) {
-    console.error('Error deleting project:', error);
-    
-    // Mock success response for demo
     res.json({
       success: true,
-      message: 'Project deleted successfully (Demo Mode)'
+      message: `Successfully deleted ${projectIds.length} project${projectIds.length > 1 ? 's' : ''} (Demo Mode)`
     });
+  } catch (error) {
+    console.error('Error deleting projects:', error);
+    res.status(500).json({ error: 'Failed to delete projects' });
+  }
+});
+
+// Download service account keys
+app.post('/api/projects/download-keys', async (req, res) => {
+  const sessionId = req.headers.authorization?.replace('Bearer ', '');
+  const session = sessions.get(sessionId);
+  
+  if (!session) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  
+  const { projectIds } = req.body;
+  
+  try {
+    // Mock service account keys
+    const keys = projectIds.map((projectId, index) => ({
+      type: "service_account",
+      project_id: projectId,
+      private_key_id: `key_${index}_${Date.now()}`,
+      private_key: "-----BEGIN PRIVATE KEY-----\nMOCK_PRIVATE_KEY\n-----END PRIVATE KEY-----\n",
+      client_email: `service-account@${projectId}.iam.gserviceaccount.com`,
+      client_id: `${Date.now()}${index}`,
+      auth_uri: "https://accounts.google.com/o/oauth2/auth",
+      token_uri: "https://oauth2.googleapis.com/token"
+    }));
+    
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="service-account-keys-${Date.now()}.json"`);
+    res.json(keys);
+  } catch (error) {
+    console.error('Error generating keys:', error);
+    res.status(500).json({ error: 'Failed to generate service account keys' });
   }
 });
 
@@ -248,9 +320,11 @@ app.get('*', (req, res) => {
   res.json({ 
     message: 'GCP Project Manager API Server',
     status: 'running',
+    version: '1.0.0',
     endpoints: {
       auth: '/auth/google',
-      api: '/api/*'
+      api: '/api/*',
+      health: '/health'
     }
   });
 });
@@ -259,4 +333,5 @@ app.listen(PORT, () => {
   console.log(`🚀 Server running on http://localhost:${PORT}`);
   console.log(`📱 Frontend URL: ${process.env.FRONTEND_URL || 'http://localhost:5173'}`);
   console.log(`🔗 Health check: http://localhost:${PORT}/health`);
+  console.log(`🔐 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
